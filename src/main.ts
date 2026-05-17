@@ -1,9 +1,5 @@
 import './styles.css';
-import {
-  copyTabToClipboard,
-  downloadTab,
-  promptExportSubdivision,
-} from './export';
+import { copyTabToClipboard, downloadTab } from './export';
 import { importTabFromText, pickTabTextFile } from './import';
 import { TabView } from './tabView';
 
@@ -41,14 +37,19 @@ function main(): void {
       return;
     }
 
-    const exportSub = promptExportSubdivision(state);
+    if (action === 'copy' || action === 'save') {
+      const options = await tabView.promptExportOptions(state);
+      if (options === null) {
+        return;
+      }
 
-    if (action === 'copy') {
-      const ok = await copyTabToClipboard(state, exportSub);
-      tabView.showToast(ok ? 'Copied to clipboard' : 'Copy failed');
-    } else if (action === 'save') {
-      downloadTab(state, exportSub);
-      tabView.showToast('Tab saved');
+      if (action === 'copy') {
+        const ok = await copyTabToClipboard(state, options);
+        tabView.showToast(ok ? 'Copied to clipboard' : 'Copy failed');
+      } else {
+        downloadTab(state, options);
+        tabView.showToast('Tab saved');
+      }
     }
   });
 }

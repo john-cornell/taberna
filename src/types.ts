@@ -16,6 +16,7 @@ export type TabState = {
   columnCount: number;
   meter: MeterConfig;
   instrument: InstrumentConfig;
+  title: string;
 };
 
 export { DEFAULT_INSTRUMENT, DEFAULT_METER };

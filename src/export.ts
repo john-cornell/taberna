@@ -1,48 +1,20 @@
 import { formatTabText } from './tabModel';
+import type { ExportSpacingMode } from './tabFileFormat';
+import {
+  composeTabFile,
+  serializeTabFileHeaders,
+  slugifyFilename,
+} from './tabFileFormat';
 import type { Subdivision } from './meter';
 import { resolveSubdivision } from './meter';
 import type { TabState } from './types';
 
 export type ExportSubdivision = Subdivision | 'stored';
 
-export function promptExportSubdivision(state: TabState): ExportSubdivision {
-  const current = resolveSubdivision(state.meter);
-  const labels: Record<ExportSubdivision, string> = {
-    beat: 'Beat (one column per beat)',
-    half: 'Half beat',
-    quarter: 'Quarter beat (full detail)',
-    stored: `Current view (${current})`,
-  };
-
-  const options: ExportSubdivision[] = ['stored', 'beat', 'half', 'quarter'];
-  const message = [
-    'Export grid resolution — notes are always stored at quarter-beat detail.',
-  ]
-    .concat(options.map((o, i) => `${i + 1}. ${labels[o]}`))
-    .join('\n');
-
-  const choice = window.prompt(message, '1');
-  if (choice === null) {
-    return 'stored';
-  }
-
-  const index = Number(choice);
-  if (Number.isInteger(index) && index >= 1 && index <= options.length) {
-    return options[index - 1]!;
-  }
-
-  const lower = choice.toLowerCase();
-  if (lower === 'beat' || lower === '1') {
-    return 'beat';
-  }
-  if (lower === 'half' || lower === '2') {
-    return 'half';
-  }
-  if (lower === 'quarter' || lower === '3') {
-    return 'quarter';
-  }
-  return 'stored';
-}
+export type ExportOptions = {
+  exportSub: ExportSubdivision;
+  spacing: ExportSpacingMode;
+};
 
 export function resolveExportSubdivision(
   state: TabState,
@@ -56,13 +28,25 @@ export function resolveExportSubdivision(
 
 export function getTabExportText(
   state: TabState,
-  exportSubdivision?: ExportSubdivision,
+  options?: Partial<ExportOptions>,
 ): string {
-  const sub =
-    exportSubdivision === undefined
-      ? resolveSubdivision(state.meter)
-      : resolveExportSubdivision(state, exportSubdivision);
-  return formatTabText(state, sub);
+  const exportSub = resolveExportSubdivision(
+    state,
+    options?.exportSub ?? 'stored',
+  );
+  const spacing = options?.spacing ?? 'normal';
+  const headers = serializeTabFileHeaders(state, exportSub, spacing);
+  const body = formatTabText(state, exportSub, spacing);
+  return composeTabFile(headers, body);
+}
+
+export function tabExportFilename(state: TabState): string {
+  const slug = slugifyFilename(state.title);
+  if (slug) {
+    return `${slug}.txt`;
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `tab-${timestamp}.txt`;
 }
 
 export function downloadText(text: string, filename: string): void {
@@ -78,13 +62,9 @@ export function downloadText(text: string, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function downloadTab(
-  state: TabState,
-  exportSubdivision?: ExportSubdivision,
-): void {
-  const text = getTabExportText(state, exportSubdivision);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  downloadText(text, `tab-${timestamp}.txt`);
+export function downloadTab(state: TabState, options?: Partial<ExportOptions>): void {
+  const text = getTabExportText(state, options);
+  downloadText(text, tabExportFilename(state));
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {
@@ -118,7 +98,7 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 
 export async function copyTabToClipboard(
   state: TabState,
-  exportSubdivision?: ExportSubdivision,
+  options?: Partial<ExportOptions>,
 ): Promise<boolean> {
-  return copyToClipboard(getTabExportText(state, exportSubdivision));
+  return copyToClipboard(getTabExportText(state, options));
 }

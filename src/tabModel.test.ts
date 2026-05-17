@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createMeterFromPreset, withMeterOptions } from './meter';
 import {
   applyMeter,
+  barPositionsInBody,
   clearCell,
   clearHalfBeatTicks,
   clearQuarterBeatTicks,
@@ -11,6 +12,7 @@ import {
   setCellFret,
   toggleCell,
   toggleTechnique,
+  exportSlotsForRow,
   viewColumnCount,
 } from './tabModel';
 import { viewColumnToTickIndex } from './tickGrid';
@@ -82,7 +84,7 @@ describe('tabModel', () => {
     expect(widths[0]).toBe(widths[1]);
     expect(widths[1]).toBe(widths[3]);
     expect(lines[1]).toMatch(/^B -+1/);
-    expect(lines[0]).toMatch(/^E -+$/);
+    expect(lines[0]).toMatch(/^E -+\s*$/);
   });
 
   it('preserves column order with sparse cells at beat view', () => {
@@ -124,6 +126,38 @@ describe('tabModel', () => {
     const tab = createInitialTab(1);
     const next = setCellFret(tab, 0, 0, 99);
     expect(next).toBe(tab);
+  });
+
+  it('keeps a leading dash before frets when column 0 is wider', () => {
+    let tab = createInitialTab(1);
+    tab = setCellFret(tab, 0, 0, 3);
+    tab = toggleTechnique(tab, 0, 0, 'bend-up');
+    tab = setCellFret(tab, 1, 1, 5);
+    const { slots } = exportSlotsForRow(tab, 1);
+    const bBody = formatTabText(tab).split('\n')[1]!.slice(2).trimEnd();
+    expect(bBody).toBe(slots.join(''));
+    expect(slots[1]).toBe('-5');
+  });
+
+  it('aligns bar lines across strings when techniques widen beats', () => {
+    const meter = withMeterOptions(createMeterFromPreset('4/4'), {
+      includeQuarterBeat: true,
+    });
+    let tab = createInitialTab(2, meter);
+    tab = setCellFret(tab, 1, 0, 0);
+    tab = setCellFret(tab, 1, 1, 1);
+    tab = toggleTechnique(tab, 1, 1, 'tap-on');
+    tab = setCellFret(tab, 1, 2, 0);
+    tab = toggleTechnique(tab, 1, 2, 'tap-off');
+    tab = setCellFret(tab, 2, 4, 0);
+
+    const text = formatTabText(tab, 'quarter', 'technique-beats');
+    const barPositions = text.split('\n').map((line) => barPositionsInBody(line.slice(2)));
+    const reference = barPositions[0]!;
+    expect(reference.length).toBeGreaterThan(0);
+    for (const positions of barPositions) {
+      expect(positions).toEqual(reference);
+    }
   });
 
   it('inserts bar lines in export when meter is set', () => {

@@ -32,7 +32,8 @@ Browser-only guitar/bass tab editor: Vite + TypeScript + vanilla DOM. No backend
 - Beat ruler aligns with grid via CSS subgrid; bar lines use `::after`, not width-changing borders
 - Techniques: focus a cell, click palette to toggle on that note (`mousedown` preventDefault on palette)
 - Scroll over a cell: auto-focus + nudge fret; click and scroll share `focusCellForInteraction` + palette sync
-- Export pads all string lines to equal width; Import parses saved `.txt` using current meter/grid
+- Export pads all string lines to equal width with aligned bar lines; optional spacing modes widen beats for techniques
+- Saved `.txt` files include `# title`, `# meter`, `# grid` headers; import uses those when present (lenient fallbacks)
 
 ## Code style
 

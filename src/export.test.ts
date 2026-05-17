@@ -3,6 +3,7 @@ import {
   copyToClipboard,
   downloadText,
   getTabExportText,
+  tabExportFilename,
 } from './export';
 import { createInitialTab, setCellFret } from './tabModel';
 
@@ -28,9 +29,23 @@ describe('export', () => {
     tab = setCellFret(tab, 0, 3, 5);
     tab = setCellFret(tab, 2, 2, 5);
     const text = getTabExportText(tab);
+    const lines = text.trimEnd().split('\n');
+    expect(lines.at(-1)).toBe('# Taberna Version: 1');
+    expect(text).toContain('# meter: 4/4');
     expect(text).toContain('E -2-3-4-5');
-    expect(text).toContain('G ---5');
+    expect(text).toContain('G -');
+    expect(text).toMatch(/G\s+[-|0-9]+5/);
     expect(text).toContain('B -');
+  });
+
+  it('uses slugified title for save filename', () => {
+    const tab = { ...createInitialTab(1), title: 'Smoke on the Water' };
+    expect(tabExportFilename(tab)).toBe('smoke-on-the-water.txt');
+  });
+
+  it('falls back to timestamp filename when title empty', () => {
+    const tab = createInitialTab(1);
+    expect(tabExportFilename(tab)).toMatch(/^tab-.+\.txt$/);
   });
 
   it('downloads text via temporary anchor', () => {

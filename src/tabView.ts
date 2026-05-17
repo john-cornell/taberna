@@ -44,6 +44,8 @@ import {
   ticksPerBar,
 } from './tickGrid';
 import { TECHNIQUES, techniqueSymbol, type Technique } from './techniques';
+import type { ExportOptions, ExportSubdivision } from './export';
+import type { ExportSpacingMode } from './tabFileFormat';
 import { MAX_FRET, MIN_FRET, type TabState } from './types';
 
 type CellTarget = {
@@ -61,6 +63,11 @@ export class TabView {
   private state: TabState;
   private selectedFret: number | null = null;
   private selectedClear = false;
+  /** Set when the user picks a fret or clear on the palette (not when syncing from a cell). */
+  private explicitPaletteChoice: 'fret' | 'clear' | null = null;
+  /** Palette apply intent captured on mousedown, before focusin syncs the palette. */
+  private pendingCellClickApply: { clear: boolean; fret: number | null } | null =
+    null;
   private focusedCell: CellTarget | null = null;
 
   private readonly root: HTMLElement;
@@ -75,6 +82,7 @@ export class TabView {
   private readonly halfBeatCheckbox: HTMLInputElement;
   private readonly quarterBeatCheckbox: HTMLInputElement;
   private readonly meterSummaryEl: HTMLElement;
+  private readonly songTitleInput: HTMLInputElement;
   private readonly toastEl: HTMLElement;
   private toastTimeoutId: ReturnType<typeof window.setTimeout> | null = null;
 
@@ -91,6 +99,18 @@ export class TabView {
     const title = document.createElement('h1');
     title.textContent = 'Taberna Tab Builder';
     header.appendChild(title);
+
+    const songTitleLabel = document.createElement('label');
+    songTitleLabel.className = 'song-title-field';
+    songTitleLabel.textContent = 'Song ';
+    this.songTitleInput = document.createElement('input');
+    this.songTitleInput.type = 'text';
+    this.songTitleInput.className = 'song-title-input';
+    this.songTitleInput.placeholder = 'Title (optional)';
+    this.songTitleInput.setAttribute('aria-label', 'Song title');
+    this.songTitleInput.maxLength = 120;
+    songTitleLabel.appendChild(this.songTitleInput);
+    header.appendChild(songTitleLabel);
 
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
@@ -193,8 +213,9 @@ export class TabView {
       'Type 0–24 in a cell, or scroll over a cell to focus and change frets (up from empty sets 0, down past 0 clears).',
       'Half / quarter / beat views share one timeline — hidden subdivisions are remembered when you switch.',
       'Instrument: guitar (6), bass (4 or 5), or custom string count and tuning labels.',
-      'Copy / Save export; Import loads a .txt file saved from Taberna (uses current time signature and grid).',
-      'Copy / Save asks which grid resolution to export; all strings pad to the same width with dashes.',
+      'Copy / Save export with optional song title; saved files include meter and grid headers for import.',
+      'Import uses file headers when present (meter, grid); otherwise uses current settings.',
+      'Copy / Save opens export options: grid resolution and bar alignment for techniques.',
       'Clear all / half beats / quarter beats remove notes from those timeline slots.',
       'Techniques: focus a cell with a fret, then click tap/bend/slide to toggle on or off.',
       'Export suffixes: t tap-on, o tap-off, ^ bend up, v bend down, / slide up, \\ slide down (e.g. -7/).',
@@ -501,32 +522,166 @@ export class TabView {
   }
 
   getState(): TabState {
-    return this.state;
+    return {
+      ...this.state,
+      title: this.songTitleInput.value,
+    };
   }
 
   setState(state: TabState): void {
     this.state = state;
+    this.songTitleInput.value = state.title;
     this.syncInstrumentControls();
     this.syncMeterControls();
     this.renderGrid();
+  }
+
+  promptExportOptions(state: TabState): Promise<ExportOptions | null> {
+    return new Promise((resolve) => {
+      const currentSub = resolveSubdivision(state.meter);
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'export-dialog-backdrop';
+
+      const dialog = document.createElement('div');
+      dialog.className = 'export-dialog';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.setAttribute('aria-labelledby', 'export-dialog-title');
+
+      const heading = document.createElement('h2');
+      heading.id = 'export-dialog-title';
+      heading.textContent = 'Export options';
+      dialog.appendChild(heading);
+
+      const gridFieldset = document.createElement('fieldset');
+      gridFieldset.className = 'export-dialog-fieldset';
+      const gridLegend = document.createElement('legend');
+      gridLegend.textContent = 'Grid resolution';
+      gridFieldset.appendChild(gridLegend);
+
+      const gridOptions: { value: ExportSubdivision; label: string }[] = [
+        { value: 'stored', label: `Current view (${currentSub})` },
+        { value: 'beat', label: 'Beat (one column per beat)' },
+        { value: 'half', label: 'Half beat' },
+        { value: 'quarter', label: 'Quarter beat (full detail)' },
+      ];
+
+      const gridName = `export-grid-${Date.now()}`;
+      for (const opt of gridOptions) {
+        const label = document.createElement('label');
+        label.className = 'export-dialog-option';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = gridName;
+        input.value = opt.value;
+        input.checked = opt.value === 'stored';
+        label.append(input, document.createTextNode(` ${opt.label}`));
+        gridFieldset.appendChild(label);
+      }
+      dialog.appendChild(gridFieldset);
+
+      const spacingFieldset = document.createElement('fieldset');
+      spacingFieldset.className = 'export-dialog-fieldset';
+      const spacingLegend = document.createElement('legend');
+      spacingLegend.textContent = 'Bar alignment';
+      spacingFieldset.appendChild(spacingLegend);
+
+      const spacingOptions: { value: ExportSpacingMode; label: string }[] = [
+        { value: 'normal', label: 'Normal' },
+        {
+          value: 'technique-beats',
+          label: 'Widen beats with techniques',
+        },
+        { value: 'all', label: 'Widen all beats' },
+      ];
+
+      const spacingName = `export-spacing-${Date.now()}`;
+      for (const opt of spacingOptions) {
+        const label = document.createElement('label');
+        label.className = 'export-dialog-option';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = spacingName;
+        input.value = opt.value;
+        input.checked = opt.value === 'technique-beats';
+        label.append(input, document.createTextNode(` ${opt.label}`));
+        spacingFieldset.appendChild(label);
+      }
+      dialog.appendChild(spacingFieldset);
+
+      const actions = document.createElement('div');
+      actions.className = 'export-dialog-actions';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Cancel';
+
+      const confirmBtn = document.createElement('button');
+      confirmBtn.type = 'button';
+      confirmBtn.textContent = 'Export';
+      confirmBtn.className = 'export-dialog-confirm';
+
+      actions.append(cancelBtn, confirmBtn);
+      dialog.appendChild(actions);
+      backdrop.appendChild(dialog);
+
+      const close = (result: ExportOptions | null) => {
+        backdrop.remove();
+        document.removeEventListener('keydown', onKeyDown);
+        resolve(result);
+      };
+
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+          close(null);
+        }
+      };
+
+      cancelBtn.addEventListener('click', () => close(null));
+      backdrop.addEventListener('click', (event) => {
+        if (event.target === backdrop) {
+          close(null);
+        }
+      });
+
+      confirmBtn.addEventListener('click', () => {
+        const gridInput = gridFieldset.querySelector<HTMLInputElement>(
+          'input[type="radio"]:checked',
+        );
+        const spacingInput = spacingFieldset.querySelector<HTMLInputElement>(
+          'input[type="radio"]:checked',
+        );
+        close({
+          exportSub: (gridInput?.value ?? 'stored') as ExportSubdivision,
+          spacing: (spacingInput?.value ?? 'technique-beats') as ExportSpacingMode,
+        });
+      });
+
+      document.addEventListener('keydown', onKeyDown);
+      document.body.appendChild(backdrop);
+      confirmBtn.focus();
+    });
   }
 
   getSelectedFret(): number | null {
     return this.selectedFret;
   }
 
-  selectFret(fret: number): void {
+  selectFret(fret: number, fromPalette = true): void {
     if (!isValidFret(fret)) {
       return;
     }
     this.selectedClear = false;
     this.selectedFret = fret;
+    this.explicitPaletteChoice = fromPalette ? 'fret' : null;
     this.renderPalette();
   }
 
-  selectClear(): void {
+  selectClear(fromPalette = true): void {
     this.selectedClear = true;
     this.selectedFret = null;
+    this.explicitPaletteChoice = fromPalette ? 'clear' : null;
     this.renderPalette();
     this.renderTechniquePalette();
   }
@@ -588,6 +743,7 @@ export class TabView {
       this.selectedFret = null;
       this.selectedClear = false;
     }
+    this.explicitPaletteChoice = null;
     this.renderPalette();
   }
 
@@ -761,7 +917,7 @@ export class TabView {
         );
         this.state = next;
         this.syncCellDisplay(target);
-        this.selectFret(MIN_FRET);
+        this.selectFret(MIN_FRET, false);
         this.emitState();
       }
       return;
@@ -775,7 +931,7 @@ export class TabView {
       );
       this.state = next;
       this.syncCellDisplay(target);
-      this.selectClear();
+      this.selectClear(false);
       this.emitState();
       return;
     }
@@ -793,7 +949,7 @@ export class TabView {
     );
     this.state = next;
     this.syncCellDisplay(target);
-    this.selectFret(nextFret);
+    this.selectFret(nextFret, false);
     this.emitState();
   }
 
@@ -1004,14 +1160,33 @@ export class TabView {
   }
 
   private bindEvents(): void {
+    this.songTitleInput.addEventListener('input', () => {
+      this.state = { ...this.state, title: this.songTitleInput.value };
+    });
+
+    this.gridEl.addEventListener('mousedown', (event) => {
+      const target = this.findCellTarget(event.target);
+      if (!target) {
+        this.pendingCellClickApply = null;
+        return;
+      }
+      this.pendingCellClickApply = {
+        clear: this.selectedClear && this.explicitPaletteChoice === 'clear',
+        fret:
+          this.explicitPaletteChoice === 'fret' ? this.selectedFret : null,
+      };
+    });
+
     this.gridEl.addEventListener('click', (event) => {
       const target = this.findCellTarget(event.target);
       if (!target) {
         return;
       }
 
-      const applyClear = this.selectedClear;
-      const applyFret = this.selectedFret;
+      const pending = this.pendingCellClickApply;
+      this.pendingCellClickApply = null;
+      const applyClear = pending?.clear ?? false;
+      const applyFret = pending?.fret ?? null;
       const placingFromPalette = applyClear || applyFret !== null;
 
       this.focusCellForInteraction(target, {

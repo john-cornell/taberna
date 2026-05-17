@@ -1,4 +1,10 @@
-import { type MeterConfig, type Subdivision, resolveSubdivision } from './meter';
+import {
+  columnsPerBeat,
+  type MeterConfig,
+  type Subdivision,
+  resolveSubdivision,
+} from './meter';
+import type { ExportSpacingMode } from './tabFileFormat';
 import { techniqueExportSuffix } from './techniques';
 import type { Technique } from './techniques';
 import {
@@ -25,6 +31,7 @@ export function stringLabels(state: TabState): string[] {
   return state.instrument.labels;
 }
 
+export type { ExportSpacingMode } from './tabFileFormat';
 export { TICKS_PER_BEAT, viewColumnCount };
 
 export function createEmptyRow(columnCount: number): TabCell[] {
@@ -47,6 +54,7 @@ export function createInitialTab(
     columnCount,
     meter,
     instrument: resolved,
+    title: '',
   };
 }
 
@@ -69,7 +77,12 @@ export function applyInstrument(
     return createEmptyRow(normalized.columnCount);
   });
 
-  return { ...normalized, strings, instrument: nextInstrument };
+  return {
+    ...normalized,
+    strings,
+    instrument: nextInstrument,
+    title: normalized.title,
+  };
 }
 
 export function applyMeter(state: TabState, meter: MeterConfig): TabState {
@@ -96,7 +109,14 @@ export function applyMeter(state: TabState, meter: MeterConfig): TabState {
     return row.slice(0, columnCount);
   });
 
-  return { ...normalized, strings, columnCount, meter, instrument: normalized.instrument };
+  return {
+    ...normalized,
+    strings,
+    columnCount,
+    meter,
+    instrument: normalized.instrument,
+    title: normalized.title,
+  };
 }
 
 export function getTickCell(
@@ -151,7 +171,13 @@ export function setTickCell(
     return next;
   });
 
-  return { ...state, strings, meter: state.meter, instrument: state.instrument };
+  return {
+    ...state,
+    strings,
+    meter: state.meter,
+    instrument: state.instrument,
+    title: state.title,
+  };
 }
 
 export function setViewCell(
@@ -227,6 +253,7 @@ export function addBars(state: TabState, barCount = 1): TabState {
     columnCount: newColumnCount,
     meter: state.meter,
     instrument: state.instrument,
+    title: state.title,
   };
 }
 
@@ -237,7 +264,7 @@ function formatCellToken(cell: TabCell): string {
   return `${cell.fret}${techniqueExportSuffix(cell.technique)}`;
 }
 
-function exportMeterForSubdivision(
+export function exportMeterForSubdivision(
   meter: MeterConfig,
   exportSub: Subdivision,
 ): MeterConfig {
@@ -248,6 +275,85 @@ function exportMeterForSubdivision(
   };
 }
 
+function slotForCellWithWidth(cell: TabCell, width: number): string {
+  if (cell.fret === null) {
+    return '-'.repeat(Math.max(1, width));
+  }
+  const slot = `-${formatCellToken(cell)}`;
+  if (slot.length >= width) {
+    return slot;
+  }
+  return slot + '-'.repeat(width - slot.length);
+}
+
+function computeColumnWidths(
+  exportRows: TabCell[][],
+  exportCols: number,
+  exportMeter: MeterConfig,
+  spacing: ExportSpacingMode,
+): number[] {
+  const cpb = columnsPerBeat(resolveSubdivision(exportMeter));
+  const widths: number[] = [];
+
+  for (let col = 0; col < exportCols; col++) {
+    let maxLen = 1;
+    for (const row of exportRows) {
+      const cell = row[col] ?? { ...EMPTY_CELL };
+      maxLen = Math.max(maxLen, slotForCellWithWidth(cell, 1).length);
+    }
+    widths.push(maxLen);
+  }
+
+  if (spacing === 'normal') {
+    return widths;
+  }
+
+  for (let beatStart = 0; beatStart < exportCols; beatStart += cpb) {
+    const beatEnd = Math.min(beatStart + cpb, exportCols);
+    let beatMax = 1;
+    let hasTechnique = false;
+
+    for (let col = beatStart; col < beatEnd; col++) {
+      beatMax = Math.max(beatMax, widths[col]!);
+      if (spacing === 'technique-beats') {
+        for (const row of exportRows) {
+          const cell = row[col] ?? { ...EMPTY_CELL };
+          if (cell.technique !== null) {
+            hasTechnique = true;
+          }
+        }
+      }
+    }
+
+    const applyWiden =
+      spacing === 'all' || (spacing === 'technique-beats' && hasTechnique);
+    const beatWidth = applyWiden ? Math.max(2, beatMax) : beatMax;
+
+    for (let col = beatStart; col < beatEnd; col++) {
+      widths[col] = beatWidth;
+    }
+  }
+
+  return widths;
+}
+
+function buildExportBodyAligned(
+  cells: TabCell[],
+  colWidths: number[],
+  exportCols: number,
+  barCols: number,
+): string {
+  let body = '';
+  for (let i = 0; i < exportCols; i++) {
+    const cell = cells[i] ?? { ...EMPTY_CELL };
+    body += slotForCellWithWidth(cell, colWidths[i] ?? 1);
+    if (barCols > 0 && (i + 1) % barCols === 0 && i + 1 < exportCols) {
+      body += '|';
+    }
+  }
+  return body;
+}
+
 export function exportColumnCount(
   state: TabState,
   exportSub: Subdivision,
@@ -256,60 +362,90 @@ export function exportColumnCount(
   return bars * viewColumnsPerBar(exportMeterForSubdivision(state.meter, exportSub));
 }
 
-function buildExportBody(
-  cells: TabCell[],
-  meter: MeterConfig,
-  exportSub: Subdivision,
-  exportCols: number,
-): string {
-  const exportMeter = exportMeterForSubdivision(meter, exportSub);
-  const barCols = viewColumnsPerBar(exportMeter);
-
-  let body = '';
-  for (let i = 0; i < exportCols; i++) {
-    const cell = cells[i] ?? { ...EMPTY_CELL };
-    const token = formatCellToken(cell);
-    body += token ? `-${token}` : '-';
-    if (barCols > 0 && (i + 1) % barCols === 0 && i + 1 < exportCols) {
-      body += '|';
-    }
-  }
-  return body;
-}
-
 export function formatStringLine(
   label: string,
   cells: TabCell[],
   meter?: MeterConfig,
   exportSubdivision?: Subdivision,
+  spacing: ExportSpacingMode = 'normal',
 ): string {
   const m = meter ?? DEFAULT_METER;
   const sub = exportSubdivision ?? resolveSubdivision(m);
+  const exportMeter = exportMeterForSubdivision(m, sub);
   const exportCols = Math.max(cells.length, 1);
-  const body = buildExportBody(cells, m, sub, exportCols);
+  const colWidths = computeColumnWidths([cells], exportCols, exportMeter, spacing);
+  const barCols = viewColumnsPerBar(exportMeter);
+  const body = buildExportBodyAligned(cells, colWidths, exportCols, barCols);
   return `${label} ${body.length > 0 ? body : '-'}`;
 }
 
 export function formatTabText(
   state: TabState,
   exportSubdivision?: Subdivision,
+  spacing: ExportSpacingMode = 'normal',
 ): string {
   const sub = exportSubdivision ?? resolveSubdivision(state.meter);
   const exportCols = exportColumnCount(state, sub);
+  const exportMeter = exportMeterForSubdivision(state.meter, sub);
+  const barCols = viewColumnsPerBar(exportMeter);
 
   const labels = stringLabels(state);
-  const lines = labels.map((label, index) => {
+  const exportRows = labels.map((_, index) => {
     const row = state.strings[index] ?? [];
-    const exportRow = rowAtExportSubdivision(row, state.meter, sub);
-    const body = buildExportBody(exportRow, state.meter, sub, exportCols);
+    return rowAtExportSubdivision(row, state.meter, sub);
+  });
+
+  const colWidths = computeColumnWidths(exportRows, exportCols, exportMeter, spacing);
+
+  const lines = labels.map((label, index) => {
+    const body = buildExportBodyAligned(
+      exportRows[index] ?? [],
+      colWidths,
+      exportCols,
+      barCols,
+    );
     return { label, body: body.length > 0 ? body : '-' };
   });
 
   const maxBodyLen = Math.max(1, ...lines.map((line) => line.body.length));
 
   return lines
-    .map(({ label, body }) => `${label} ${body.padEnd(maxBodyLen, '-')}`)
+    .map(({ label, body }) => `${label} ${body.padEnd(maxBodyLen, ' ')}`)
     .join('\n');
+}
+
+/** @internal Exported for tests — builds slot strings for one row. */
+export function exportSlotsForRow(
+  state: TabState,
+  stringIndex: number,
+  spacing: ExportSpacingMode = 'normal',
+  exportSubdivision?: Subdivision,
+): { colWidths: number[]; slots: string[] } {
+  const sub = exportSubdivision ?? resolveSubdivision(state.meter);
+  const exportCols = exportColumnCount(state, sub);
+  const exportMeter = exportMeterForSubdivision(state.meter, sub);
+  const labels = stringLabels(state);
+  const exportRows = labels.map((_, index) => {
+    const row = state.strings[index] ?? [];
+    return rowAtExportSubdivision(row, state.meter, sub);
+  });
+  const colWidths = computeColumnWidths(exportRows, exportCols, exportMeter, spacing);
+  const row = exportRows[stringIndex] ?? [];
+  const slots = Array.from({ length: exportCols }, (_, i) =>
+    slotForCellWithWidth(row[i] ?? { ...EMPTY_CELL }, colWidths[i] ?? 1),
+  );
+  return { colWidths, slots };
+}
+
+/** Returns 1-based character indices of bar lines in an export body (for tests). */
+export function barPositionsInBody(body: string): number[] {
+  const positions: number[] = [];
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === '|') {
+      positions.push(i + 1);
+    }
+  }
+  return positions;
 }
 
 export function tickInBeat(tickIndex: number): number {
@@ -325,7 +461,13 @@ function clearTicksWhere(
       predicate(tickIndex) ? { ...EMPTY_CELL } : cell,
     ),
   );
-  return { ...state, strings, meter: state.meter, instrument: state.instrument };
+  return {
+    ...state,
+    strings,
+    meter: state.meter,
+    instrument: state.instrument,
+    title: state.title,
+  };
 }
 
 export function clearAll(state: TabState): TabState {
@@ -334,6 +476,7 @@ export function clearAll(state: TabState): TabState {
     strings: state.strings.map(() => createEmptyRow(state.columnCount)),
     meter: state.meter,
     instrument: state.instrument,
+    title: state.title,
   };
 }
 
