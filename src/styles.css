@@ -9,6 +9,7 @@
   --accent-dim: #364fc7;
   --filled: #2f9e44;
   --focus-ring: #ffd43b;
+  --playhead: #ff922b;
   --bar-line: #f1f3f5;
   --beat-line: #5c5f66;
   font-family: 'Consolas', 'Courier New', monospace;
@@ -163,6 +164,68 @@ body {
 
 .toolbar button:hover {
   border-color: var(--accent);
+}
+
+.toolbar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.playback-section {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.65rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.playback-section button {
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.playback-section button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.playback-section button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.playback-speed-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  margin-left: auto;
+}
+
+.playback-speed-field input {
+  width: 4.5rem;
+  font: inherit;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tab-column.playhead .tab-cell {
+  box-shadow: inset 0 0 0 2px var(--playhead);
+}
+
+.beat-column.playhead .beat-marker-label {
+  color: var(--playhead);
+  font-weight: 800;
 }
 
 .instrument-section,

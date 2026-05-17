@@ -69,8 +69,15 @@ export class TabView {
   private pendingCellClickApply: { clear: boolean; fret: number | null } | null =
     null;
   private focusedCell: CellTarget | null = null;
+  private playheadColumn = 0;
+  private isPlaying = false;
+  private playTimer: ReturnType<typeof window.setInterval> | null = null;
 
   private readonly root: HTMLElement;
+  private readonly playBtn: HTMLButtonElement;
+  private readonly pauseBtn: HTMLButtonElement;
+  private readonly playbackBackBtn: HTMLButtonElement;
+  private readonly playbackBpmInput: HTMLInputElement;
   private readonly gridEl: HTMLElement;
   private readonly paletteEl: HTMLElement;
   private readonly techniquePaletteEl: HTMLElement;
@@ -157,6 +164,55 @@ export class TabView {
     );
     header.appendChild(toolbar);
 
+    const playbackSection = document.createElement('section');
+    playbackSection.className = 'playback-section';
+    playbackSection.setAttribute('aria-label', 'Tab playback');
+
+    this.playBtn = document.createElement('button');
+    this.playBtn.type = 'button';
+    this.playBtn.textContent = 'Play';
+    this.playBtn.dataset.action = 'play';
+    this.playBtn.setAttribute('aria-label', 'Play tab from playhead');
+
+    this.pauseBtn = document.createElement('button');
+    this.pauseBtn.type = 'button';
+    this.pauseBtn.textContent = 'Pause';
+    this.pauseBtn.dataset.action = 'pause';
+    this.pauseBtn.setAttribute('aria-label', 'Pause playback');
+    this.pauseBtn.disabled = true;
+
+    this.playbackBackBtn = document.createElement('button');
+    this.playbackBackBtn.type = 'button';
+    this.playbackBackBtn.textContent = 'Stop';
+    this.playbackBackBtn.dataset.action = 'playback-back';
+    this.playbackBackBtn.setAttribute(
+      'aria-label',
+      'Stop playback and return playhead to start',
+    );
+
+    const speedLabel = document.createElement('label');
+    speedLabel.className = 'playback-speed-field';
+    speedLabel.textContent = 'Speed ';
+    this.playbackBpmInput = document.createElement('input');
+    this.playbackBpmInput.type = 'number';
+    this.playbackBpmInput.min = '20';
+    this.playbackBpmInput.max = '320';
+    this.playbackBpmInput.step = '1';
+    this.playbackBpmInput.value = '96';
+    this.playbackBpmInput.dataset.playback = 'bpm';
+    this.playbackBpmInput.setAttribute('aria-label', 'Playback tempo in BPM');
+    const speedUnit = document.createElement('span');
+    speedUnit.textContent = 'BPM';
+    speedUnit.setAttribute('aria-hidden', 'true');
+    speedLabel.append(this.playbackBpmInput, speedUnit);
+
+    playbackSection.append(
+      this.playBtn,
+      this.pauseBtn,
+      this.playbackBackBtn,
+      speedLabel,
+    );
+
     this.instrumentEl = this.buildInstrumentSection();
     this.customStringCountInput = this.instrumentEl.querySelector(
       '[data-instrument="string-count"]',
@@ -218,6 +274,7 @@ export class TabView {
       'Copy / Save opens export options: grid resolution and bar alignment for techniques.',
       'Clear all / half beats / quarter beats remove notes from those timeline slots.',
       'Techniques: focus a cell with a fret, then click tap/bend/slide to toggle on or off.',
+      'Playback: Play moves beat-by-beat; Pause stops; Stop resets to bar 1; Speed is BPM.',
       'Export suffixes: t tap-on, o tap-off, ^ bend up, v bend down, / slide up, \\ slide down (e.g. -7/).',
     ]) {
       const item = document.createElement('li');
@@ -240,6 +297,7 @@ export class TabView {
 
     this.root.append(
       header,
+      playbackSection,
       this.instrumentEl,
       this.meterEl,
       this.gridEl,
@@ -529,8 +587,13 @@ export class TabView {
   }
 
   setState(state: TabState): void {
+    this.pausePlayback();
     this.state = state;
     this.songTitleInput.value = state.title;
+    const viewCols = viewColumnCount(this.state);
+    if (this.playheadColumn >= viewCols) {
+      this.playheadColumn = Math.max(0, viewCols - 1);
+    }
     this.syncInstrumentControls();
     this.syncMeterControls();
     this.renderGrid();
@@ -757,11 +820,134 @@ export class TabView {
   }
 
   private updateState(next: TabState, options?: { rerender?: boolean }): void {
+    this.pausePlayback();
     this.state = next;
+    const viewCols = viewColumnCount(this.state);
+    if (this.playheadColumn >= viewCols) {
+      this.playheadColumn = Math.max(0, viewCols - 1);
+    }
     if (options?.rerender !== false) {
       this.renderGrid();
     }
     this.emitState();
+  }
+
+  private readPlaybackBpm(): number {
+    const parsed = Number(this.playbackBpmInput.value);
+    if (!Number.isFinite(parsed)) {
+      return 96;
+    }
+    return Math.min(320, Math.max(20, Math.round(parsed)));
+  }
+
+  private beatStepMs(): number {
+    const bpm = this.readPlaybackBpm();
+    return Math.round(60_000 / bpm);
+  }
+
+  private syncPlaybackControls(): void {
+    this.playBtn.disabled = this.isPlaying;
+    this.pauseBtn.disabled = !this.isPlaying;
+  }
+
+  private clearPlayheadHighlight(): void {
+    for (const el of this.gridEl.querySelectorAll('.playhead')) {
+      el.classList.remove('playhead');
+    }
+  }
+
+  private applyPlayheadHighlight(): void {
+    this.clearPlayheadHighlight();
+    const col = this.playheadColumn;
+    for (const el of this.gridEl.querySelectorAll(
+      `.tab-column[data-column-index="${col}"]`,
+    )) {
+      el.classList.add('playhead');
+    }
+    const marker = this.gridEl.querySelector(
+      `.beat-column[data-column-index="${col}"]`,
+    );
+    marker?.classList.add('playhead');
+    const scrollTarget = this.gridEl.querySelector(
+      `.tab-cell-wrap[data-column-index="${col}"]`,
+    );
+    scrollTarget?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'center',
+    });
+  }
+
+  private setPlayheadColumn(column: number): void {
+    const viewCols = viewColumnCount(this.state);
+    this.playheadColumn =
+      viewCols > 0 ? Math.min(Math.max(0, column), viewCols - 1) : 0;
+    this.applyPlayheadHighlight();
+  }
+
+  private restartPlayTimer(): void {
+    if (this.playTimer !== null) {
+      window.clearInterval(this.playTimer);
+    }
+    this.playTimer = window.setInterval(() => {
+      this.advancePlayback();
+    }, this.beatStepMs());
+  }
+
+  private advancePlayback(): void {
+    const viewCols = viewColumnCount(this.state);
+    if (viewCols === 0) {
+      this.pausePlayback();
+      return;
+    }
+
+    const cpb = columnsPerBeat(resolveSubdivision(this.state.meter));
+    const next = this.playheadColumn + cpb;
+    if (next >= viewCols) {
+      this.setPlayheadColumn(viewCols - 1);
+      this.pausePlayback();
+      this.showToast('End of tab');
+      return;
+    }
+
+    this.setPlayheadColumn(next);
+  }
+
+  startPlayback(): void {
+    const viewCols = viewColumnCount(this.state);
+    if (viewCols === 0) {
+      return;
+    }
+
+    if (this.playheadColumn >= viewCols - 1) {
+      this.playheadColumn = 0;
+    }
+
+    this.isPlaying = true;
+    this.syncPlaybackControls();
+    this.applyPlayheadHighlight();
+    this.restartPlayTimer();
+  }
+
+  pausePlayback(): void {
+    if (this.playTimer !== null) {
+      window.clearInterval(this.playTimer);
+      this.playTimer = null;
+    }
+    this.isPlaying = false;
+    this.syncPlaybackControls();
+  }
+
+  backToPlaybackStart(): void {
+    this.pausePlayback();
+    this.setPlayheadColumn(0);
+  }
+
+  private handlePlaybackBpmChange(): void {
+    this.playbackBpmInput.value = String(this.readPlaybackBpm());
+    if (this.isPlaying) {
+      this.restartPlayTimer();
+    }
   }
 
   private syncCellClasses(cell: HTMLInputElement, fret: number | null): void {
@@ -1111,6 +1297,8 @@ export class TabView {
 
       this.gridEl.appendChild(row);
     });
+
+    this.applyPlayheadHighlight();
   }
 
   private buildBeatRuler(): HTMLElement {
@@ -1133,6 +1321,7 @@ export class TabView {
     for (let columnIndex = 0; columnIndex < viewCols; columnIndex++) {
       const slot = document.createElement('div');
       slot.className = 'tab-column beat-column';
+      slot.dataset.columnIndex = String(columnIndex);
       const marker = document.createElement('span');
       marker.className = 'beat-marker';
       const posInBar = columnIndex % colsPerBar;
@@ -1376,7 +1565,20 @@ export class TabView {
       } else if (action === 'clear-quarter-beats') {
         this.updateState(clearQuarterBeatTicks(this.state));
         this.showToast('Cleared quarter-beat slots');
+      } else if (action === 'play') {
+        this.startPlayback();
+      } else if (action === 'pause') {
+        this.pausePlayback();
+      } else if (action === 'playback-back') {
+        this.backToPlaybackStart();
       }
+    });
+
+    this.playbackBpmInput.addEventListener('change', () => {
+      this.handlePlaybackBpmChange();
+    });
+    this.playbackBpmInput.addEventListener('input', () => {
+      this.handlePlaybackBpmChange();
     });
   }
 }
