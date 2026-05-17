@@ -1,0 +1,41 @@
+---
+description: Taberna project conventions for agents (build, deploy zip, architecture)
+alwaysApply: true
+---
+
+# Taberna
+
+Browser-only guitar/bass tab editor: Vite + TypeScript + vanilla DOM. No backend.
+
+## Deployment zip
+
+- After `npm run build`, package **`dist/` contents** (not the `dist` folder itself) into **`taberna.zip`** at the project root.
+- **Never** use `taberna-site.zip` or other names.
+- PowerShell: `Compress-Archive -Path "dist\*" -DestinationPath "taberna.zip" -Force`
+- IONOS: unzip into web root so `index.html` and `assets/` sit beside each other; `vite.config.ts` uses `base: './'` for relative asset URLs.
+
+## Commands
+
+- Dev: `npm run dev` or `run.bat`
+- Test: `npm test`
+- Production build: `npm run build`
+
+## Architecture
+
+- **State**: `TabState` in `src/types.ts` — `strings`, `columnCount`, `meter`, `instrument`
+- **Storage**: quarter-beat ticks (`TICKS_PER_BEAT = 4` in `src/tickGrid.ts`); view mode (beat/half/quarter) is display-only
+- **Key modules**: `tabModel.ts`, `tabView.ts`, `meter.ts`, `instrument.ts`, `export.ts`, `import.ts`, `techniques.ts`
+- **UI**: `TabView` owns grid, palettes, meter/instrument controls; `main.ts` wires Copy/Save/Import toolbar actions
+
+## UX conventions (do not regress)
+
+- Beat ruler aligns with grid via CSS subgrid; bar lines use `::after`, not width-changing borders
+- Techniques: focus a cell, click palette to toggle on that note (`mousedown` preventDefault on palette)
+- Scroll over a cell: auto-focus + nudge fret; click and scroll share `focusCellForInteraction` + palette sync
+- Export pads all string lines to equal width; Import parses saved `.txt` using current meter/grid
+
+## Code style
+
+- Match existing patterns; minimal scope per task
+- Do not commit unless the user asks
+- Update `taberna.zip` when shipping build/deploy changes the user will upload

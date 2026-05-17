@@ -1,0 +1,12 @@
+# IONOS / Apache: correct MIME types for Vite bundles
+AddType application/javascript .js
+AddType application/javascript .mjs
+AddType text/css .css
+
+# Serve real files; do not rewrite asset requests to index.html
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+</IfModule>
