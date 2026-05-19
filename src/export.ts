@@ -102,3 +102,41 @@ export async function copyTabToClipboard(
 ): Promise<boolean> {
   return copyToClipboard(getTabExportText(state, options));
 }
+
+export async function saveWithPicker(
+  blob: Blob,
+  suggestedName: string,
+  types?: { description: string; accept: Record<string, string[]> }[],
+): Promise<boolean> {
+  const defaultTypes = types ?? [
+    { description: 'Text file', accept: { 'text/plain': ['.txt'] } },
+  ];
+
+  if ('showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName,
+        types: defaultTypes,
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        return false;
+      }
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = suggestedName;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+  return true;
+}

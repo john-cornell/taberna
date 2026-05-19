@@ -47,6 +47,11 @@ import { TECHNIQUES, techniqueSymbol, type Technique } from './techniques';
 import type { ExportOptions, ExportSubdivision } from './export';
 import type { ExportSpacingMode } from './tabFileFormat';
 import { MAX_FRET, MIN_FRET, type TabState } from './types';
+import type { SoundEngine } from './soundEngine';
+import { WebAudioEngine } from './webAudioEngine';
+import { buildSchedule } from './playbackEngine';
+import { viewColumnToTickIndex } from './tickGrid';
+import { WAVE_PRESETS, getWavePreset } from './soundPresets';
 
 type CellTarget = {
   wrap: HTMLElement;
@@ -57,6 +62,7 @@ type CellTarget = {
 
 export type TabViewCallbacks = {
   onStateChange?: (state: TabState) => void;
+  version?: string;
 };
 
 export class TabView {
@@ -78,6 +84,10 @@ export class TabView {
   private readonly pauseBtn: HTMLButtonElement;
   private readonly playbackBackBtn: HTMLButtonElement;
   private readonly playbackBpmInput: HTMLInputElement;
+  private readonly soundToggleBtn: HTMLButtonElement;
+  private readonly volumeInput: HTMLInputElement;
+  private readonly toneSelect: HTMLSelectElement;
+  private readonly sustainInput: HTMLInputElement;
   private readonly gridEl: HTMLElement;
   private readonly paletteEl: HTMLElement;
   private readonly techniquePaletteEl: HTMLElement;
@@ -92,6 +102,8 @@ export class TabView {
   private readonly songTitleInput: HTMLInputElement;
   private readonly toastEl: HTMLElement;
   private toastTimeoutId: ReturnType<typeof window.setTimeout> | null = null;
+  private soundEnabled = false;
+  private soundEngine: SoundEngine;
 
   constructor(
     container: HTMLElement,
@@ -119,6 +131,11 @@ export class TabView {
     songTitleLabel.appendChild(this.songTitleInput);
     header.appendChild(songTitleLabel);
 
+    const versionSpan = document.createElement('span');
+    versionSpan.className = 'app-version';
+    versionSpan.textContent = this.callbacks.version ? `v${this.callbacks.version}` : '';
+    header.appendChild(versionSpan);
+
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
     const copyBtn = document.createElement('button');
@@ -136,6 +153,11 @@ export class TabView {
     importBtn.textContent = 'Import';
     importBtn.setAttribute('aria-label', 'Import tab from a text file');
     importBtn.dataset.action = 'import';
+    const midiBtn = document.createElement('button');
+    midiBtn.type = 'button';
+    midiBtn.textContent = 'MIDI';
+    midiBtn.setAttribute('aria-label', 'Export tab as MIDI file');
+    midiBtn.dataset.action = 'export-midi';
     const addBarBtn = document.createElement('button');
     addBarBtn.type = 'button';
     addBarBtn.textContent = 'Add bar';
@@ -157,6 +179,7 @@ export class TabView {
       copyBtn,
       saveBtn,
       importBtn,
+      midiBtn,
       addBarBtn,
       clearAllBtn,
       clearHalfBtn,
@@ -190,6 +213,39 @@ export class TabView {
       'Stop playback and return playhead to start',
     );
 
+    this.soundToggleBtn = document.createElement('button');
+    this.soundToggleBtn.type = 'button';
+    this.soundToggleBtn.textContent = 'Sound: Off';
+    this.soundToggleBtn.dataset.action = 'toggle-sound';
+    this.soundToggleBtn.setAttribute('aria-label', 'Toggle audio playback');
+    this.soundToggleBtn.classList.add('sound-toggle');
+
+    const volumeLabel = document.createElement('label');
+    volumeLabel.className = 'playback-volume-field';
+    volumeLabel.textContent = 'Vol ';
+    this.volumeInput = document.createElement('input');
+    this.volumeInput.type = 'range';
+    this.volumeInput.min = '0';
+    this.volumeInput.max = '100';
+    this.volumeInput.value = '30';
+    this.volumeInput.dataset.playback = 'volume';
+    this.volumeInput.setAttribute('aria-label', 'Playback volume');
+    volumeLabel.append(this.volumeInput);
+
+    const toneLabel = document.createElement('label');
+    toneLabel.className = 'playback-tone-field';
+    toneLabel.textContent = 'Sound ';
+    this.toneSelect = document.createElement('select');
+    this.toneSelect.setAttribute('aria-label', 'Sound preset');
+    for (const preset of WAVE_PRESETS) {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = preset.label;
+      this.toneSelect.appendChild(option);
+    }
+    this.toneSelect.value = 'sawtooth';
+    toneLabel.append(this.toneSelect);
+
     const speedLabel = document.createElement('label');
     speedLabel.className = 'playback-speed-field';
     speedLabel.textContent = 'Speed ';
@@ -206,10 +262,26 @@ export class TabView {
     speedUnit.setAttribute('aria-hidden', 'true');
     speedLabel.append(this.playbackBpmInput, speedUnit);
 
+    const sustainLabel = document.createElement('label');
+    sustainLabel.className = 'playback-sustain-field';
+    sustainLabel.textContent = 'Sustain ';
+    this.sustainInput = document.createElement('input');
+    this.sustainInput.type = 'range';
+    this.sustainInput.min = '0';
+    this.sustainInput.max = '100';
+    this.sustainInput.value = '33';
+    this.sustainInput.dataset.playback = 'sustain';
+    this.sustainInput.setAttribute('aria-label', 'Playback sustain');
+    sustainLabel.append(this.sustainInput);
+
     playbackSection.append(
       this.playBtn,
       this.pauseBtn,
       this.playbackBackBtn,
+      this.soundToggleBtn,
+      volumeLabel,
+      toneLabel,
+      sustainLabel,
       speedLabel,
     );
 
@@ -312,6 +384,8 @@ export class TabView {
     this.renderTechniquePalette();
     this.renderGrid();
     this.bindEvents();
+    this.soundEngine = new WebAudioEngine();
+    this.soundEngine.setSustain(1 / 3);
   }
 
   getMeter(): MeterConfig {
@@ -926,6 +1000,11 @@ export class TabView {
     this.isPlaying = true;
     this.syncPlaybackControls();
     this.applyPlayheadHighlight();
+    if (this.soundEnabled) {
+      const startTick = viewColumnToTickIndex(this.playheadColumn, this.state.meter);
+      const schedule = buildSchedule(this.state, startTick, this.readPlaybackBpm());
+      this.soundEngine.start(schedule);
+    }
     this.restartPlayTimer();
   }
 
@@ -934,6 +1013,7 @@ export class TabView {
       window.clearInterval(this.playTimer);
       this.playTimer = null;
     }
+    this.soundEngine.stop();
     this.isPlaying = false;
     this.syncPlaybackControls();
   }
@@ -943,11 +1023,38 @@ export class TabView {
     this.setPlayheadColumn(0);
   }
 
-  private handlePlaybackBpmChange(): void {
-    this.playbackBpmInput.value = String(this.readPlaybackBpm());
+  private commitPlaybackBpm(): void {
+    const raw = this.playbackBpmInput.value.trim();
+    if (raw === '') {
+      this.playbackBpmInput.value = '96';
+    } else {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        this.playbackBpmInput.value = '96';
+      } else {
+        const clamped = Math.min(320, Math.max(20, Math.round(parsed)));
+        this.playbackBpmInput.value = String(clamped);
+      }
+    }
     if (this.isPlaying) {
       this.restartPlayTimer();
     }
+  }
+
+  private handlePlaybackBpmInput(): void {
+    if (this.isPlaying) {
+      this.restartPlayTimer();
+    }
+  }
+
+  private applyWavePreset(presetId: string): void {
+    const preset = getWavePreset(presetId);
+    if (!preset) {
+      return;
+    }
+    this.soundEngine.setTone(preset.wave);
+    this.soundEngine.setSustain(preset.sustain);
+    this.sustainInput.value = String(Math.round(preset.sustain * 100));
   }
 
   private syncCellClasses(cell: HTMLInputElement, fret: number | null): void {
@@ -1571,14 +1678,40 @@ export class TabView {
         this.pausePlayback();
       } else if (action === 'playback-back') {
         this.backToPlaybackStart();
+      } else if (action === 'toggle-sound') {
+        this.soundEnabled = !this.soundEnabled;
+        this.soundToggleBtn.textContent = this.soundEnabled ? 'Sound: On' : 'Sound: Off';
+        this.soundToggleBtn.classList.toggle('sound-on', this.soundEnabled);
+        if (!this.soundEnabled && this.isPlaying) {
+          this.soundEngine.stop();
+        }
       }
     });
 
+    this.playbackBpmInput.addEventListener('focus', () => {
+      this.playbackBpmInput.select();
+    });
     this.playbackBpmInput.addEventListener('change', () => {
-      this.handlePlaybackBpmChange();
+      this.commitPlaybackBpm();
+    });
+    this.playbackBpmInput.addEventListener('blur', () => {
+      this.commitPlaybackBpm();
     });
     this.playbackBpmInput.addEventListener('input', () => {
-      this.handlePlaybackBpmChange();
+      this.handlePlaybackBpmInput();
+    });
+
+    this.volumeInput.addEventListener('input', () => {
+      const gain = Number(this.volumeInput.value) / 100;
+      this.soundEngine.setVolume(gain);
+    });
+
+    this.toneSelect.addEventListener('change', () => {
+      this.applyWavePreset(this.toneSelect.value);
+    });
+
+    this.sustainInput.addEventListener('input', () => {
+      this.soundEngine.setSustain(Number(this.sustainInput.value) / 100);
     });
   }
 }
