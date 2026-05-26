@@ -346,7 +346,7 @@ export class TabView {
       'Copy / Save opens export options: grid resolution and bar alignment for techniques.',
       'Clear all / half beats / quarter beats remove notes from those timeline slots.',
       'Techniques: focus a cell with a fret, then click tap/bend/slide to toggle on or off.',
-      'Playback: Play moves beat-by-beat; Pause stops; Stop resets to bar 1; Speed is BPM.',
+      'Playback: Spacebar toggles Play/Pause. Click a beat number on the top ruler to set the playhead. Speed is BPM.',
       'Export suffixes: t tap-on, o tap-off, ^ bend up, v bend down, / slide up, \\ slide down (e.g. -7/).',
     ]) {
       const item = document.createElement('li');
