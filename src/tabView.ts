@@ -718,6 +718,27 @@ export class TabView {
       }
       dialog.appendChild(gridFieldset);
 
+      const layoutFieldset = document.createElement('fieldset');
+      layoutFieldset.className = 'export-dialog-fieldset';
+      const layoutLegend = document.createElement('legend');
+      layoutLegend.textContent = 'Layout';
+      layoutFieldset.appendChild(layoutLegend);
+
+      const barsLabel = document.createElement('label');
+      barsLabel.className = 'export-dialog-option';
+      barsLabel.style.display = 'flex';
+      barsLabel.style.alignItems = 'center';
+      barsLabel.style.gap = '0.5rem';
+      const barsInput = document.createElement('input');
+      barsInput.type = 'number';
+      barsInput.min = '1';
+      barsInput.max = '64';
+      barsInput.value = '8';
+      barsInput.style.width = '4rem';
+      barsLabel.append(barsInput, document.createTextNode('Bars per line'));
+      layoutFieldset.appendChild(barsLabel);
+      dialog.appendChild(layoutFieldset);
+
       const spacingFieldset = document.createElement('fieldset');
       spacingFieldset.className = 'export-dialog-fieldset';
       const spacingLegend = document.createElement('legend');
@@ -741,7 +762,7 @@ export class TabView {
         input.type = 'radio';
         input.name = spacingName;
         input.value = opt.value;
-        input.checked = opt.value === 'technique-beats';
+        input.checked = opt.value === 'all';
         label.append(input, document.createTextNode(` ${opt.label}`));
         spacingFieldset.appendChild(label);
       }
@@ -789,9 +810,16 @@ export class TabView {
         const spacingInput = spacingFieldset.querySelector<HTMLInputElement>(
           'input[type="radio"]:checked',
         );
+        
+        let parsedBars = parseInt(barsInput.value, 10);
+        if (isNaN(parsedBars) || parsedBars < 1) {
+          parsedBars = 8;
+        }
+
         close({
           exportSub: (gridInput?.value ?? 'stored') as ExportSubdivision,
-          spacing: (spacingInput?.value ?? 'technique-beats') as ExportSpacingMode,
+          spacing: (spacingInput?.value ?? 'all') as ExportSpacingMode,
+          barsPerLine: parsedBars,
         });
       });
 
@@ -803,6 +831,10 @@ export class TabView {
 
   getSelectedFret(): number | null {
     return this.selectedFret;
+  }
+
+  getPlayheadColumn(): number {
+    return this.playheadColumn;
   }
 
   selectFret(fret: number, fromPalette = true): void {
@@ -860,6 +892,7 @@ export class TabView {
     this.focusedCell = target;
     this.syncCellDisplay(target);
 
+
     if (document.activeElement !== target.input) {
       target.input.focus({ preventScroll: true });
     }
@@ -901,7 +934,15 @@ export class TabView {
       this.playheadColumn = Math.max(0, viewCols - 1);
     }
     if (options?.rerender !== false) {
+      const scrollLeft = this.gridEl.scrollLeft;
+      const focusedTarget = this.getFocusedCellTarget();
+      
       this.renderGrid();
+      
+      this.gridEl.scrollLeft = scrollLeft;
+      if (focusedTarget) {
+        this.focusCell(focusedTarget.stringIndex, focusedTarget.columnIndex);
+      }
     }
     this.emitState();
   }
@@ -1474,6 +1515,16 @@ export class TabView {
     });
 
     this.gridEl.addEventListener('click', (event) => {
+      const el = event.target as HTMLElement;
+      const beatCol = el.closest('.beat-column') as HTMLElement;
+      if (beatCol) {
+        const colIndex = parseInt(beatCol.dataset.columnIndex || '', 10);
+        if (!isNaN(colIndex)) {
+          this.setPlayheadColumn(colIndex);
+        }
+        return;
+      }
+
       const target = this.findCellTarget(event.target);
       if (!target) {
         return;
@@ -1684,6 +1735,21 @@ export class TabView {
         this.soundToggleBtn.classList.toggle('sound-on', this.soundEnabled);
         if (!this.soundEnabled && this.isPlaying) {
           this.soundEngine.stop();
+        }
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.code === 'Space') {
+        const target = event.target as HTMLElement | null;
+        if (target && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName)) {
+          return; // Let native inputs/buttons handle spacebar
+        }
+        event.preventDefault();
+        if (this.isPlaying) {
+          this.pausePlayback();
+        } else {
+          this.startPlayback();
         }
       }
     });

@@ -5,6 +5,7 @@ import { TabView } from './tabView';
 import { version } from '../package.json';
 import { buildSchedule } from './playbackEngine';
 import { generateMidiFile } from './midiExport';
+import { viewColumnToTickIndex } from './tickGrid';
 
 function main(): void {
   const app = document.querySelector<HTMLElement>('#app');
@@ -60,7 +61,11 @@ function main(): void {
 
     if (action === 'export-midi') {
       const bpm = Number((app.querySelector('[data-playback="bpm"]') as HTMLInputElement)?.value) || 96;
-      const schedule = buildSchedule(state, 0, bpm);
+      
+      // Calculate startTick based on the current playhead
+      const startTick = viewColumnToTickIndex(tabView.getPlayheadColumn(), state.meter);
+      
+      const schedule = buildSchedule(state, startTick, bpm);
       if (schedule.length === 0) {
         tabView.showToast('No notes to export');
         return;

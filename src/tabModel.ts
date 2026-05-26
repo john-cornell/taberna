@@ -383,6 +383,7 @@ export function formatTabText(
   state: TabState,
   exportSubdivision?: Subdivision,
   spacing: ExportSpacingMode = 'normal',
+  barsPerLine = 8,
 ): string {
   const sub = exportSubdivision ?? resolveSubdivision(state.meter);
   const exportCols = exportColumnCount(state, sub);
@@ -397,21 +398,35 @@ export function formatTabText(
 
   const colWidths = computeColumnWidths(exportRows, exportCols, exportMeter, spacing);
 
-  const lines = labels.map((label, index) => {
-    const body = buildExportBodyAligned(
-      exportRows[index] ?? [],
-      colWidths,
-      exportCols,
-      barCols,
-    );
-    return { label, body: body.length > 0 ? body : '-' };
-  });
+  const chunkSize = barCols * barsPerLine;
+  const blocks: string[] = [];
 
-  const maxBodyLen = Math.max(1, ...lines.map((line) => line.body.length));
+  for (let startCol = 0; startCol < exportCols; startCol += chunkSize) {
+    const endCol = Math.min(startCol + chunkSize, exportCols);
+    const blockCols = endCol - startCol;
 
-  return lines
-    .map(({ label, body }) => `${label} ${body.padEnd(maxBodyLen, ' ')}`)
-    .join('\n');
+    const lines = labels.map((label, index) => {
+      const rowSlice = (exportRows[index] ?? []).slice(startCol, endCol);
+      const widthSlice = colWidths.slice(startCol, endCol);
+      const body = buildExportBodyAligned(
+        rowSlice,
+        widthSlice,
+        blockCols,
+        barCols,
+      );
+      return { label, body: body.length > 0 ? body : '-' };
+    });
+
+    const maxBodyLen = Math.max(1, ...lines.map((line) => line.body.length));
+
+    const blockText = lines
+      .map(({ label, body }) => `${label} ${body.padEnd(maxBodyLen, ' ')}`)
+      .join('\n');
+    
+    blocks.push(blockText);
+  }
+
+  return blocks.join('\n\n');
 }
 
 /** @internal Exported for tests — builds slot strings for one row. */

@@ -604,9 +604,11 @@ export function parseTabExportText(
     : 4;
 
   const lineInfos: { label: string; body: string }[] = [];
+  let stringIndex = 0;
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) {
+      stringIndex = 0;
       continue;
     }
     const space = trimmed.indexOf(' ');
@@ -617,10 +619,16 @@ export function parseTabExportText(
     if (!label) {
       continue;
     }
-    lineInfos.push({
-      label,
-      body: trimmed.slice(space + 1).trimEnd(),
-    });
+    const bodyPart = trimmed.slice(space + 1).trimEnd();
+    if (lineInfos[stringIndex]) {
+      lineInfos[stringIndex]!.body += bodyPart;
+    } else {
+      lineInfos.push({
+        label,
+        body: bodyPart,
+      });
+    }
+    stringIndex++;
   }
 
   if (lineInfos.length === 0) {

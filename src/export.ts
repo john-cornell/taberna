@@ -14,6 +14,7 @@ export type ExportSubdivision = Subdivision | 'stored';
 export type ExportOptions = {
   exportSub: ExportSubdivision;
   spacing: ExportSpacingMode;
+  barsPerLine?: number;
 };
 
 export function resolveExportSubdivision(
@@ -34,9 +35,10 @@ export function getTabExportText(
     state,
     options?.exportSub ?? 'stored',
   );
-  const spacing = options?.spacing ?? 'normal';
+  const spacing = options?.spacing ?? 'all';
+  const barsPerLine = options?.barsPerLine ?? 8;
   const headers = serializeTabFileHeaders(state, exportSub, spacing);
-  const body = formatTabText(state, exportSub, spacing);
+  const body = formatTabText(state, exportSub, spacing, barsPerLine);
   return composeTabFile(headers, body);
 }
 
